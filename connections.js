@@ -1,48 +1,29 @@
-// connections.js
-(function runConnections() {
-  // 1) Ensure we are on the correct page
-  if (!location.href.includes("/mynetwork/invite-connect/connections")) {
-    console.log("connections.js: Not on the connections page, do nothing.");
-    return;
-  }
+// Helper functions defined first to avoid potential reference issues
+function waitMs(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
 
-  // 2) Delay or check doc state to ensure DOM is ready
-  if (document.readyState === "loading") {
-    // The page is still loading => wait for it to finish
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    // Page is ready => proceed
-    init();
-  }
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 
-  // On page unload => set goFlag=false so we don't auto-run if user returns manually
-  window.addEventListener("beforeunload", () => {
-    chrome.storage.local.set({ goFlag: false }, () => {
-      console.log("Navigating away => goFlag=false.");
+function getFromStorage(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, (res) => {
+      if (typeof keys === "string") {
+        resolve({ [keys]: res[keys] });
+      } else {
+        resolve(res);
+      }
     });
   });
+}
 
-  async function init() {
-    // 3) Check if user clicked "Go"
-    const { goFlag } = await getFromStorage("goFlag");
-    if (!goFlag) {
-      console.log("connections.js: goFlag=false => no scraping.");
-      return;
-    }
-
-    console.log("connections.js: goFlag=true, starting auto-scroll...");
-
-    // If needed, optionally clear storage or do other setup
-    // But typically we do that from the popup code
-
-    await autoScrollConnections();
-
-    const profilesData = extractConnectionData();
-    chrome.storage.local.set({ linkedinConnections: profilesData }, () => {
-      console.log("connections.js: Saved connections:", profilesData.length);
-    });
-  }
-})();
+// We stop if user pressed "Stop" => stopFlag=true, or user navigated => goFlag=false
+async function shouldStop() {
+  const { goFlag, stopFlag } = await getFromStorage(["goFlag", "stopFlag"]);
+  return stopFlag || !goFlag;
+}
 
 /** autoScrollConnections checks if we should stop each iteration. */
 async function autoScrollConnections() {
@@ -166,50 +147,86 @@ function extractConnectionData() {
   return profiles;
 }
 
-// We stop if user pressed "Stop" => stopFlag=true, or user navigated => goFlag=false
-async function shouldStop() {
-  const { goFlag, stopFlag } = await getFromStorage(["goFlag", "stopFlag"]);
-  return stopFlag || !goFlag;
-}
-
-// ---------- HELPER UTILS ----------
-function waitMs(ms) {
-  return new Promise(res => setTimeout(res, ms));
-}
-
-function randomBetween(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function getFromStorage(keys) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(keys, (res) => {
-      if (typeof keys === "string") {
-        resolve({ [keys]: res[keys] });
-      } else {
-        resolve(res);
-      }
-    });
-  });
-}
-
 /**
  * Wait for a specific element to appear in the DOM, if needed.
- * (We used it in user.js; here it's not strictly required. 
- * If you do need it for connections page, you can replicate the pattern from user.js)
  */
-function waitForElement(selector) {
-  return new Promise(resolve => {
+function waitForElement(selector, timeoutMs = 30000) {
+  return new Promise((resolve) => {
     const existing = document.querySelector(selector);
     if (existing) return resolve(existing);
+
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      console.log(`Timeout waiting for element: ${selector}`);
+      resolve(null);
+    }, timeoutMs);
 
     const observer = new MutationObserver(() => {
       const found = document.querySelector(selector);
       if (found) {
         observer.disconnect();
+        clearTimeout(timeout);
         resolve(found);
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
   });
 }
+
+// Main IIFE for connections.js
+(function runConnections() {
+  // 1) Ensure we are on the correct page
+  if (!location.href.includes("/mynetwork/invite-connect/connections")) {
+    console.log("connections.js: Not on the connections page, do nothing.");
+    return;
+  }
+
+  // 2) Delay or check doc state to ensure DOM is ready
+  if (document.readyState === "loading") {
+    // The page is still loading => wait for it to finish
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    // Page is ready => proceed
+    init();
+  }
+
+  // On page unload => set goFlag=false so we don't auto-run if user returns manually
+  window.addEventListener("beforeunload", () => {
+    chrome.storage.local.set({ goFlag: false }, () => {
+      console.log("Navigating away => goFlag=false.");
+    });
+  });
+
+  async function init() {
+    // 3) Check if user clicked "Go"
+    let { goFlag } = await getFromStorage("goFlag");
+    
+    // If false, wait a bit and check again to overcome timing issues
+    if (!goFlag) {
+      console.log("goFlag is false, waiting a bit and checking again...");
+      await waitMs(1500); // Wait 1.5 seconds
+      const result = await getFromStorage("goFlag");
+      goFlag = result.goFlag;
+    }
+    
+    if (!goFlag) {
+      console.log("connections.js: goFlag=false => no scraping.");
+      return;
+    }
+
+    console.log("connections.js: goFlag=true, starting auto-scroll...");
+
+    // First, complete the auto-scrolling process
+    await autoScrollConnections();
+    console.log("Auto-scroll completed, extracting connection data...");
+
+    // Then extract the data after scrolling is complete
+    const profilesData = extractConnectionData();
+    console.log(`Extracted ${profilesData.length} connections`);
+
+    // Save the data to storage
+    chrome.storage.local.set({ linkedinConnections: profilesData }, () => {
+      console.log("connections.js: Saved connections:", profilesData.length);
+    });
+  }
+})();

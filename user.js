@@ -1,7 +1,57 @@
+// Helper: wait for element with timeout
+function waitForElement(selector, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const existing = document.querySelector(selector);
+    if (existing) return resolve(existing);
+
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      console.log(`Timeout waiting for element: ${selector}`);
+      resolve(null);
+    }, timeoutMs);
+
+    const observer = new MutationObserver(() => {
+      const found = document.querySelector(selector);
+      if (found) {
+        observer.disconnect();
+        clearTimeout(timeout);
+        resolve(found);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+// Helper: get local storage keys
+function getFromStorage(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, (res) => {
+      if (typeof keys === "string") {
+        resolve({ [keys]: res[keys] });
+      } else {
+        resolve(res);
+      }
+    });
+  });
+}
+
+function waitMs(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
 // user.js
 (async function() {
   // Check if user actually pressed "Go" (goFlag)
-  const { goFlag } = await getFromStorage("goFlag");
+  let { goFlag } = await getFromStorage("goFlag");
+  
+  // If false, wait a bit and check again to overcome timing issues
+  if (!goFlag) {
+    console.log("goFlag is false, waiting a bit and checking again...");
+    await waitMs(1500); // Wait 1.5 seconds
+    const result = await getFromStorage("goFlag");
+    goFlag = result.goFlag;
+  }
+  
   if (!goFlag) {
     console.log("user.js: goFlag=false, skipping owner data scraping.");
     return;
@@ -66,33 +116,3 @@
   });
 
 })();
-
-// Helper: wait for element
-function waitForElement(selector) {
-  return new Promise(resolve => {
-    const existing = document.querySelector(selector);
-    if (existing) return resolve(existing);
-
-    const observer = new MutationObserver(() => {
-      const found = document.querySelector(selector);
-      if (found) {
-        observer.disconnect();
-        resolve(found);
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
-}
-
-// Helper: get local storage keys
-function getFromStorage(keys) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(keys, (res) => {
-      if (typeof keys === "string") {
-        resolve({ [keys]: res[keys] });
-      } else {
-        resolve(res);
-      }
-    });
-  });
-}
